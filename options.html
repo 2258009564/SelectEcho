@@ -19,6 +19,9 @@
             Google。
           </li>
           <li>
+            想用 AI 精翻：引擎模式选“AI 精翻”，选择预设服务后填入对应 API Key。
+          </li>
+          <li>
             想在国内网络更稳定：去百度翻译开放平台创建应用，拿到 AppID
             与密钥后填写。
           </li>
@@ -53,15 +56,16 @@
           <option value="auto">自动（有百度凭证走百度，否则 Google）</option>
           <option value="baidu">仅百度（需填写 AppID 和密钥）</option>
           <option value="google">仅 Google（忽略百度凭证）</option>
+          <option value="ai">AI 精翻（OpenAI 兼容接口）</option>
         </select>
 
-        <label for="maxChars">单次最大字符数（20-5000）</label>
+        <label for="maxChars">单次最大字符数（20-12000）</label>
         <input
           id="maxChars"
           name="maxChars"
           type="number"
           min="20"
-          max="5000"
+          max="12000"
           required
         />
 
@@ -104,9 +108,83 @@
           placeholder="与 AppID 配套使用"
         />
 
+        <section class="ai-section" aria-label="AI 精翻设置">
+          <h2>AI 精翻</h2>
+
+          <label for="aiProviderPreset">AI 接口预设</label>
+          <select id="aiProviderPreset" name="aiProviderPreset">
+            <option value="openai">OpenAI</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="zhipu-flash-free">智谱 Flash 免费</option>
+            <option value="custom">自定义 OpenAI 兼容接口</option>
+          </select>
+          <p id="aiPresetHint" class="inline-note"></p>
+
+          <label for="aiBaseUrl">AI Base URL</label>
+          <input
+            id="aiBaseUrl"
+            name="aiBaseUrl"
+            type="text"
+            placeholder="https://api.openai.com"
+            autocomplete="off"
+          />
+
+          <label for="aiPath">AI 接口路径</label>
+          <input
+            id="aiPath"
+            name="aiPath"
+            type="text"
+            placeholder="/v1/chat/completions"
+            autocomplete="off"
+          />
+
+          <label for="aiModel">AI 模型名</label>
+          <input
+            id="aiModel"
+            name="aiModel"
+            type="text"
+            placeholder="gpt-4.1-mini"
+            autocomplete="off"
+          />
+
+          <label for="aiPromptPreset">AI Prompt 预设</label>
+          <select id="aiPromptPreset" name="aiPromptPreset">
+            <option value="precision-translate">高保真精翻</option>
+          </select>
+          <p id="aiPromptHint" class="inline-note">
+            内置预设会强调忠实翻译、术语一致和结构保留。
+          </p>
+
+          <label for="aiCustomPrompt">自定义 Prompt（可选）</label>
+          <textarea
+            id="aiCustomPrompt"
+            name="aiCustomPrompt"
+            rows="6"
+            placeholder="不填写则使用上方预设 Prompt。填写后会覆盖内置预设。"
+          ></textarea>
+
+          <label for="aiApiKey">AI API Key</label>
+          <input
+            id="aiApiKey"
+            name="aiApiKey"
+            type="password"
+            placeholder="sk-..."
+            autocomplete="off"
+          />
+
+          <label class="checkbox-row" for="aiEnabledStream">
+            <input
+              id="aiEnabledStream"
+              name="aiEnabledStream"
+              type="checkbox"
+            />
+            启用 AI 流式输出
+          </label>
+        </section>
+
         <p class="inline-note">
-          规则：可手动选择百度或 Google，也可用自动模式按凭证切换。Google 超时约
-          3 秒后直接提示，不做第三方 fallback。
+          规则：可手动选择百度、Google 或 AI 精翻，也可用自动模式按凭证切换。
+          自定义 AI 域名首次保存时会请求该域名访问权限。
         </p>
 
         <button type="submit">保存设置</button>

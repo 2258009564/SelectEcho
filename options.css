@@ -85,6 +85,22 @@ form {
   gap: 10px;
 }
 
+.ai-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 14px;
+  border: 1px solid #d8e5df;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f7fffc, #f8fbff);
+}
+
+.ai-section h2 {
+  margin: 0;
+  font-size: 16px;
+  color: #14532d;
+}
+
 label {
   font-size: 14px;
   font-weight: 600;
@@ -93,6 +109,7 @@ label {
 input[type="text"],
 input[type="number"],
 input[type="password"],
+textarea,
 select,
 input:not([type]) {
   width: 100%;
@@ -122,6 +139,18 @@ input:focus {
 select:focus {
   outline: 2px solid rgba(15, 118, 110, 0.24);
   border-color: var(--accent);
+}
+
+textarea:focus {
+  outline: 2px solid rgba(15, 118, 110, 0.24);
+  border-color: var(--accent);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.55;
+  font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei", monospace;
 }
 
 .checkbox-row {
