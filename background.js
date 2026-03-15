@@ -168,6 +168,11 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+// 左键点击扩展图标时，直接打开设置页，降低配置入口成本。
+chrome.action.onClicked.addListener(() => {
+  chrome.runtime.openOptionsPage();
+});
+
 async function translateMessage(message) {
   const settings = await getSettings();
   const aiSettings = resolveAiSettings(settings);

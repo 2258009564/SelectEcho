@@ -58,6 +58,7 @@ English quick start: [README_EN.md](README_EN.md)
 3. 点击“加载已解压的扩展程序”。
 4. 选择当前项目目录。
 5. 打开任意网页，按一次 `Ctrl + R` 刷新后测试。
+6. 需要配置 API 时，左键点击浏览器工具栏里的 SelectEcho 图标即可直接打开设置页。
 
 说明：Chrome/Edge 开发者模式通常加载目录而非直接安装 zip。
 
@@ -105,26 +106,27 @@ English quick start: [README_EN.md](README_EN.md)
 3. 查看译文、源文（可选）和引擎标签。
 4. 按 `Esc` 或点右上角 `×` 关闭面板。
 5. 点击“复制”按钮可复制当前译文。
+6. 需要调整引擎或 API 时，左键点击扩展图标可快速进入设置页。
 
 ## 配置项参考
 
-| 配置项                          | 类型/可选值                                               | 默认值    | 说明               |
-| ------------------------------- | --------------------------------------------------------- | --------- | ------------------ |
-| 源语言代码 (`sourceLang`)       | `auto` 或语言代码                                         | `auto`    | 推荐保持 `auto`    |
-| 目标语言代码 (`targetLang`)     | 语言代码                                                  | `zh-CN`   | 默认翻译成简体中文 |
-| 翻译引擎模式 (`engineMode`)     | `auto` / `baidu` / `google` / `ai`                        | `auto`    | 支持 AI 精翻       |
-| 单次最大字符数 (`maxChars`)     | `20-5000`                                                 | `2000`    | 超过限制会直接提示 |
-| 显示原文预览 (`showSourceText`) | `true` / `false`                                          | `true`    | 关闭可减少面板高度 |
-| 翻译框模板 (`panelTheme`)       | `classic` / `glass` / `brutal` / `editorial` / `terminal` | `classic` | 仅影响展示样式     |
-| 百度 AppID (`baiduAppId`)       | 字符串                                                    | 空        | 与密钥配套使用     |
-| 百度密钥 (`baiduAppKey`)        | 字符串                                                    | 空        | 与 AppID 配套使用  |
-| AI 预设 (`aiProviderPreset`)    | `openai` / `deepseek` / `zhipu-flash-free` / `custom`     | `openai`  | OpenAI 兼容接口    |
-| AI Base URL (`aiBaseUrl`)       | HTTPS 地址                                                | 预设值    | 自定义接口可修改   |
-| AI 模型 (`aiModel`)             | 字符串                                                    | 预设值    | 可覆盖预设模型名   |
-| AI 路径 (`aiPath`)              | URL Path                                                  | 预设值    | 默认为 Chat Completions |
-| AI Prompt 预设 (`aiPromptPreset`) | `precision-translate`                                   | 预设值    | 内置高保真精翻 Prompt |
-| AI 自定义 Prompt (`aiCustomPrompt`) | 多行文本                                               | 空        | 不为空时覆盖内置预设 |
-| AI 流式 (`aiEnabledStream`)     | `true` / `false`                                          | `true`    | 仅纯文本走流式     |
+| 配置项                              | 类型/可选值                                               | 默认值    | 说明                    |
+| ----------------------------------- | --------------------------------------------------------- | --------- | ----------------------- |
+| 源语言代码 (`sourceLang`)           | `auto` 或语言代码                                         | `auto`    | 推荐保持 `auto`         |
+| 目标语言代码 (`targetLang`)         | 语言代码                                                  | `zh-CN`   | 默认翻译成简体中文      |
+| 翻译引擎模式 (`engineMode`)         | `auto` / `baidu` / `google` / `ai`                        | `auto`    | 支持 AI 精翻            |
+| 单次最大字符数 (`maxChars`)         | `20-5000`                                                 | `2000`    | 超过限制会直接提示      |
+| 显示原文预览 (`showSourceText`)     | `true` / `false`                                          | `true`    | 关闭可减少面板高度      |
+| 翻译框模板 (`panelTheme`)           | `classic` / `glass` / `brutal` / `editorial` / `terminal` | `classic` | 仅影响展示样式          |
+| 百度 AppID (`baiduAppId`)           | 字符串                                                    | 空        | 与密钥配套使用          |
+| 百度密钥 (`baiduAppKey`)            | 字符串                                                    | 空        | 与 AppID 配套使用       |
+| AI 预设 (`aiProviderPreset`)        | `openai` / `deepseek` / `zhipu-flash-free` / `custom`     | `openai`  | OpenAI 兼容接口         |
+| AI Base URL (`aiBaseUrl`)           | HTTPS 地址                                                | 预设值    | 自定义接口可修改        |
+| AI 模型 (`aiModel`)                 | 字符串                                                    | 预设值    | 可覆盖预设模型名        |
+| AI 路径 (`aiPath`)                  | URL Path                                                  | 预设值    | 默认为 Chat Completions |
+| AI Prompt 预设 (`aiPromptPreset`)   | `precision-translate`                                     | 预设值    | 内置高保真精翻 Prompt   |
+| AI 自定义 Prompt (`aiCustomPrompt`) | 多行文本                                                  | 空        | 不为空时覆盖内置预设    |
+| AI 流式 (`aiEnabledStream`)         | `true` / `false`                                          | `true`    | 仅纯文本走流式          |
 
 ## 工作原理
 

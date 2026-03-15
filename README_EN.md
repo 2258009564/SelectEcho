@@ -15,6 +15,7 @@ If you want to test the core feature quickly after installation, start with the 
 4. Open any normal `http/https` webpage and refresh it once (`Ctrl + R`).
 5. Select an English sentence with the left mouse button and release.
 6. Confirm the translation panel appears near your selection.
+7. Need to configure engine/API? Left-click the SelectEcho toolbar icon to open settings directly.
 
 Expected result:
 
@@ -36,7 +37,7 @@ In this setup, SelectEcho will use Google endpoint directly.
 
 If you want higher quality translation:
 
-1. Open extension options.
+1. Left-click the SelectEcho toolbar icon to open extension options.
 2. Set engine mode to `ai`.
 3. Pick a preset (`OpenAI`, `DeepSeek`, or `Zhipu Flash Free`).
 4. Fill in your API key.
