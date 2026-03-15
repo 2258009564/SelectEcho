@@ -223,7 +223,9 @@ async function translateMessage(message) {
   }
 
   if (selectedEngine === "ai" && !aiSettings.isConfigured) {
-    throw new Error("当前引擎模式为 AI 精翻，但 AI Base URL、API Key 或模型名未配置完整。");
+    throw new Error(
+      "当前引擎模式为 AI 精翻，但 AI Base URL、API Key 或模型名未配置完整。",
+    );
   }
 
   const languageInfo = await detectLanguageWithFallback(compactText || text);
@@ -277,11 +279,11 @@ async function translateMessage(message) {
             targetLang,
             aiSettings,
           )
-      : await translateRichWithGoogleEngine(
-          richPayload,
-          effectiveSourceLang,
-          targetLang,
-        )
+        : await translateRichWithGoogleEngine(
+            richPayload,
+            effectiveSourceLang,
+            targetLang,
+          )
     : selectedEngine === "baidu"
       ? await translateWithBaiduEngine(
           text,
@@ -297,7 +299,11 @@ async function translateMessage(message) {
             targetLang,
             aiSettings,
           )
-      : await translateWithGoogleEngine(text, effectiveSourceLang, targetLang);
+        : await translateWithGoogleEngine(
+            text,
+            effectiveSourceLang,
+            targetLang,
+          );
 
   // 回传识别元信息，前端可据此展示提示并辅助排障。
   result.detectMeta = {
@@ -840,7 +846,11 @@ function normalizeEngineMode(value) {
   }
 
   const normalized = value.trim().toLowerCase();
-  if (normalized === "baidu" || normalized === "google" || normalized === "ai") {
+  if (
+    normalized === "baidu" ||
+    normalized === "google" ||
+    normalized === "ai"
+  ) {
     return normalized;
   }
 
@@ -1397,7 +1407,9 @@ async function handleStreamingTranslation(port, message, streamKey) {
   }
 
   if (!aiSettings.isConfigured) {
-    throw new Error("AI 精翻配置不完整，请先在设置页填写 AI Base URL、API Key 和模型名。");
+    throw new Error(
+      "AI 精翻配置不完整，请先在设置页填写 AI Base URL、API Key 和模型名。",
+    );
   }
 
   const maxChars = Number(settings.maxChars) || DEFAULT_SETTINGS.maxChars;
@@ -1416,11 +1428,16 @@ async function handleStreamingTranslation(port, message, streamKey) {
     safePostMessage(port, {
       type: "translate:complete",
       requestId: message.requestId,
-      data: buildSkipResult("检测到简体中文，已跳过翻译。", targetLang, "simplified-zh", {
-        variant: skipDecision.variant,
-        chineseRatio: skipDecision.chineseRatio,
-        confidence: skipDecision.confidence,
-      }),
+      data: buildSkipResult(
+        "检测到简体中文，已跳过翻译。",
+        targetLang,
+        "simplified-zh",
+        {
+          variant: skipDecision.variant,
+          chineseRatio: skipDecision.chineseRatio,
+          confidence: skipDecision.confidence,
+        },
+      ),
     });
     return;
   }
@@ -1703,10 +1720,7 @@ async function createAiHttpError(response) {
 
   try {
     const payload = await response.json();
-    message =
-      payload?.error?.message ||
-      payload?.message ||
-      "";
+    message = payload?.error?.message || payload?.message || "";
   } catch (_error) {
     message = "";
   }

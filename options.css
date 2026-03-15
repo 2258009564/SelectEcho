@@ -32,7 +32,9 @@ body {
   background: var(--card);
   border-radius: 16px;
   padding: 24px;
+  padding-bottom: 84px;
   box-shadow: 0 18px 45px rgba(31, 41, 55, 0.14);
+  position: relative;
 }
 
 h1 {
@@ -243,4 +245,55 @@ button:hover {
 
 .status.success {
   color: #065f46;
+}
+
+.github-corner {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 8px 12px;
+  border: 1px solid #d5dfd8;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  text-decoration: none;
+  box-shadow: 0 8px 18px rgba(31, 41, 55, 0.12);
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease,
+    color 120ms ease;
+}
+
+.github-corner:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 11px 24px rgba(31, 41, 55, 0.16);
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.github-corner svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  flex: 0 0 auto;
+}
+
+.github-corner span {
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+@media (max-width: 620px) {
+  .settings-card {
+    padding-bottom: 92px;
+  }
+
+  .github-corner {
+    left: 16px;
+    right: 16px;
+    justify-content: center;
+  }
 }

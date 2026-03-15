@@ -591,6 +591,63 @@
   color: var(--muted-color);
 }
 
+#dst-panel .dst-brand {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+#dst-panel .dst-brand-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 2px 6px;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--muted-color);
+  opacity: 0.72;
+  text-decoration: none;
+  transition:
+    opacity 0.16s ease,
+    color 0.16s ease,
+    background-color 0.16s ease,
+    border-color 0.16s ease;
+}
+
+#dst-panel .dst-brand-link:hover {
+  opacity: 0.98;
+  color: var(--title-color);
+  border-color: var(--chip-border);
+  background: var(--chip-bg);
+}
+
+#dst-panel .dst-brand-link svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
+  flex: 0 0 auto;
+}
+
+#dst-panel .dst-brand-text {
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#dst-panel[data-theme="brutal"] .dst-brand-link {
+  opacity: 0.85;
+  border-color: #111111;
+}
+
+#dst-panel[data-theme="terminal"] .dst-brand-link {
+  opacity: 0.82;
+  border-color: #2f897c;
+}
+
 #dst-panel[data-state="loading"] .dst-translation {
   color: #0d6885;
 }
@@ -653,6 +710,15 @@
   #dst-panel .dst-meta {
     width: 100%;
     justify-content: flex-end;
+  }
+
+  #dst-panel .dst-brand-link {
+    font-size: 9px;
+    padding: 2px 5px;
+  }
+
+  #dst-panel .dst-brand-text {
+    max-width: 180px;
   }
 
   #dst-panel[data-theme="brutal"] {

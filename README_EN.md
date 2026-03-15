@@ -5,6 +5,12 @@ Select text with your left mouse button, release, and you get translation near t
 
 If you want to test the core feature quickly after installation, start with the section below.
 
+## What's New in v1.1.1
+
+- Left-click the extension toolbar icon to open settings directly.
+- Added a subtle GitHub Star link in the settings page corner.
+- Added a compact GitHub Star link inside each translation panel.
+
 ## 2-Minute Quick Test
 
 1. Open your extension page.
@@ -22,6 +28,7 @@ Expected result:
 - Panel shows status and translated text.
 - Press `Esc` to close the panel.
 - Click the copy button to copy current translation.
+- A small GitHub Star link is shown at the bottom of the translation panel.
 
 ## Quick Setup (No API Key Needed)
 
@@ -42,6 +49,8 @@ If you want higher quality translation:
 3. Pick a preset (`OpenAI`, `DeepSeek`, or `Zhipu Flash Free`).
 4. Fill in your API key.
 5. Keep stream output enabled for long text.
+
+The settings page also includes a tiny GitHub Star link in the bottom-right corner.
 
 ## Troubleshooting
 

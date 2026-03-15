@@ -27,10 +27,12 @@ English quick start: [README_EN.md](README_EN.md)
 ## 功能亮点
 
 - 左键 `mouseup` 触发翻译，内置防抖和重复选区去重。
+- 左键点击扩展图标可直接打开设置页，无需再走右键“选项”。
 - 输入区域保护：`input`、`textarea`、`contenteditable` 中默认不触发。
 - 简体中文自动跳过，繁体中文继续翻译为简体，避免“中文翻中文”。
 - 支持 5 套翻译框模板：`classic` / `glass` / `brutal` / `editorial` / `terminal`。
 - 新增 AI 精翻：支持 OpenAI 兼容接口、DeepSeek、智谱 Flash 免费模型等预设。
+- 设置页和翻译面板都新增了小巧 GitHub Star 入口，不打断主流程。
 - 结构保真翻译：尽量保留段落、列表、强调、代码与换行。
 - 翻译状态可视化：`翻译中` / `完成` / `已跳过` / `失败`。
 - 面板支持边界自适应，避免超出可视区域。
@@ -107,6 +109,7 @@ English quick start: [README_EN.md](README_EN.md)
 4. 按 `Esc` 或点右上角 `×` 关闭面板。
 5. 点击“复制”按钮可复制当前译文。
 6. 需要调整引擎或 API 时，左键点击扩展图标可快速进入设置页。
+7. 设置页右下角与翻译面板底部都提供了 GitHub Star 入口。
 
 ## 配置项参考
 
@@ -200,6 +203,7 @@ SelectEcho/
 ├─ options.css
 ├─ options.html
 ├─ options.js
+├─ README_EN.md
 └─ README.md
 ```
 
@@ -224,20 +228,22 @@ SelectEcho/
 1. 核对 `manifest.json` 的版本号。
 2. 检查权限与 README 一致。
 3. 准备截图（设置页 + 翻译面板 + 错误提示）。
-4. 自测三种引擎模式：`auto`、`baidu`、`google`。
+4. 自测四种引擎模式：`auto`、`baidu`、`google`、`ai`。
+5. 验证左键点击扩展图标可直接打开设置页。
+6. 验证设置页与翻译面板中的 GitHub Star 入口可正常打开仓库链接。
 
 ## 自动生成 Release ZIP（无需手写 Release）
 
 仓库已支持“推送标签自动发版”：
 
-- 触发条件：推送 `v*` 版本标签（例如 `v1.1.0`）
+- 触发条件：推送 `v*` 版本标签（例如 `v1.1.1`）
 - 自动动作：创建 Release、自动生成 Release Notes、上传 `SelectEcho.zip`
 
 你只需要执行：
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.1.1
+git push origin v1.1.1
 ```
 
 执行后可通过以下地址直接下载最新稳定版 ZIP：
@@ -245,6 +251,13 @@ git push origin v1.1.0
 <https://github.com/2258009564/SelectEcho/releases/latest/download/SelectEcho.zip>
 
 ## 版本记录
+
+### v1.1.1
+
+- 新增“左键点击扩展图标直接打开设置页”的配置入口。
+- 设置页右下角新增 GitHub Star 入口，样式保持小巧低干扰。
+- 翻译面板新增同款小型 GitHub Star 入口，兼容现有主题。
+- README 补充本次交互与入口说明，发布命令更新为 `v1.1.1`。
 
 ### v1.1.0
 
