@@ -225,14 +225,14 @@ SelectEcho/
 
 仓库已支持“推送标签自动发版”：
 
-- 触发条件：推送 `v*` 版本标签（例如 `v1.0.1`）
+- 触发条件：推送 `v*` 版本标签（例如 `v1.1.0`）
 - 自动动作：创建 Release、自动生成 Release Notes、上传 `SelectEcho.zip`
 
 你只需要执行：
 
 ```bash
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 执行后可通过以下地址直接下载最新稳定版 ZIP：
@@ -240,6 +240,13 @@ git push origin v1.0.1
 <https://github.com/2258009564/SelectEcho/releases/latest/download/SelectEcho.zip>
 
 ## 版本记录
+
+### v1.1.0
+
+- 新增 AI 精翻引擎模式，支持 OpenAI/DeepSeek/智谱 Flash 免费等预设。
+- 新增长文本流式输出与翻译过程面板临时固定，减少阅读中断。
+- 新增内置高保真 Prompt 预设，并支持自定义 Prompt 覆盖。
+- 贡献指南拆分为独立文档，完善协作与提交流程。
 
 ### v1.0.0
 
