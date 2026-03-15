@@ -4,6 +4,8 @@ SelectEcho 是一个面向 Chrome/Edge（Manifest V3）的划词翻译扩展：�
 
 English quick start: [README_EN.md](README_EN.md)
 
+你可以在 [这里](https://alisa22580.pages.dev/posts/selectecho-getting-started/) 获得面向新手的安装与使用指南。
+
 ## 目录
 
 - [English README](README_EN.md)
