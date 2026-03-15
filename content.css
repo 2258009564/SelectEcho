@@ -279,6 +279,10 @@
   transform: translateY(-8px) scale(0.985);
 }
 
+#dst-panel[data-pinned="true"] {
+  max-height: min(70vh, calc(100vh - 32px));
+}
+
 #dst-panel .dst-header {
   position: relative;
   z-index: 1;

@@ -8,7 +8,13 @@
   ],
   "host_permissions": [
     "https://translate.googleapis.com/*",
-    "https://fanyi-api.baidu.com/*"
+    "https://fanyi-api.baidu.com/*",
+    "https://api.openai.com/*",
+    "https://api.deepseek.com/*",
+    "https://open.bigmodel.cn/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"

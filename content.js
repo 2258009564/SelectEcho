@@ -15,6 +15,8 @@
     maxChars: 2000,
     showSourceText: true,
     panelTheme: "classic",
+    engineMode: "auto",
+    aiEnabledStream: true,
   };
 
   const THEMES = new Set([
@@ -84,6 +86,10 @@
   let lastSelectionKey = "";
   let lastAnchorRect = null;
   let copyResetTimer = null;
+  let activeStreamPort = null;
+  let activeStreamRequestId = 0;
+  let isStreaming = false;
+  let isPinnedDuringStream = false;
 
   init();
 
@@ -170,12 +176,20 @@
 
     // 无有效选区时收起面板，并清空去重指纹。
     if (!selection.text) {
+      if (isStreaming) {
+        return;
+      }
+
       lastSelectionKey = "";
       hidePanel();
       return;
     }
 
     if (selection.text.length < MIN_SELECTION_LENGTH) {
+      if (isStreaming) {
+        return;
+      }
+
       lastSelectionKey = "";
       hidePanel();
       return;
@@ -235,6 +249,10 @@
     }
 
     if (panel.contains(event.target)) {
+      return;
+    }
+
+    if (isPinnedDuringStream) {
       return;
     }
 
@@ -522,6 +540,22 @@
   function requestTranslation(selection) {
     const { text, rect, richPayload, sourceRichHtml } = selection;
     const currentRequest = ++requestId;
+    const sourcePreview = settings.showSourceText ? text : "";
+    const sourceHtml = settings.showSourceText ? sourceRichHtml : "";
+
+    abortActiveStream();
+
+    if (shouldUseStreamingTranslation(richPayload)) {
+      startStreamingTranslation({
+        requestToken: currentRequest,
+        text,
+        rect,
+        richPayload,
+        sourcePreview,
+        sourceHtml,
+      });
+      return;
+    }
 
     chrome.runtime.sendMessage(
       {
@@ -536,9 +570,6 @@
         if (currentRequest !== requestId) {
           return;
         }
-
-        const sourcePreview = settings.showSourceText ? text : "";
-        const sourceHtml = settings.showSourceText ? sourceRichHtml : "";
 
         if (chrome.runtime.lastError) {
           // 错误时清空去重指纹，允许用户在同一选区立即重试。
@@ -587,6 +618,129 @@
         });
       },
     );
+  }
+
+  function shouldUseStreamingTranslation(richPayload) {
+    return (
+      settings.engineMode === "ai" &&
+      settings.aiEnabledStream !== false &&
+      !richPayload
+    );
+  }
+
+  function startStreamingTranslation({
+    requestToken,
+    text,
+    rect,
+    richPayload,
+    sourcePreview,
+    sourceHtml,
+  }) {
+    const port = chrome.runtime.connect({ name: "AI_TRANSLATION_STREAM" });
+    activeStreamPort = port;
+    activeStreamRequestId = requestToken;
+
+    port.onMessage.addListener((message) => {
+      if (!message || message.requestId !== activeStreamRequestId) {
+        return;
+      }
+
+      if (requestToken !== requestId) {
+        return;
+      }
+
+      if (message.type === "translate:start") {
+        isStreaming = true;
+        isPinnedDuringStream = true;
+        showPanel({
+          anchorRect: rect,
+          translationText: "翻译中...",
+          translationHtml: "",
+          sourceText: sourcePreview,
+          sourceHtml,
+          engine: message.engine || "ai",
+          state: "loading",
+          footnoteText: "长文本翻译中，面板已临时固定。",
+          pinDuringStream: true,
+        });
+        return;
+      }
+
+      if (message.type === "translate:delta") {
+        isStreaming = true;
+        isPinnedDuringStream = true;
+        showPanel({
+          anchorRect: rect,
+          translationText: normalizePanelText(message.finalText) || "翻译中...",
+          translationHtml: "",
+          sourceText: sourcePreview,
+          sourceHtml,
+          engine: message.engine || "ai",
+          state: "loading",
+          footnoteText: "长文本翻译中，面板已临时固定。",
+          pinDuringStream: true,
+        });
+        return;
+      }
+
+      if (message.type === "translate:complete") {
+        finishStreamingState();
+        const data = message.data || {};
+        const state = mapPanelState(data.engine);
+        const renderPayload = buildTranslationRenderPayload(data);
+        showPanel({
+          anchorRect: rect,
+          translationText: renderPayload.text,
+          translationHtml: renderPayload.html,
+          sourceText: sourcePreview,
+          sourceHtml,
+          engine: data.engine,
+          state,
+          footnoteText: buildFootnoteText(data, state),
+          pinDuringStream: false,
+        });
+        closeStreamPort(port);
+        return;
+      }
+
+      if (message.type === "translate:error") {
+        finishStreamingState();
+        lastSelectionKey = "";
+        showPanel({
+          anchorRect: rect,
+          translationText: message.error || "流式翻译失败，请稍后重试。",
+          translationHtml: "",
+          sourceText: sourcePreview,
+          sourceHtml,
+          engine: "error",
+          state: "error",
+          footnoteText: "可稍后重试，或在设置页调整 AI 接口参数。",
+          pinDuringStream: false,
+        });
+        closeStreamPort(port);
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (activeStreamPort !== port) {
+        return;
+      }
+
+      if (isStreaming && requestToken === requestId) {
+        finishStreamingState();
+      }
+
+      disconnectStreamPort();
+    });
+
+    port.postMessage({
+      type: "translate:start",
+      requestId: requestToken,
+      text,
+      sourceLang: settings.sourceLang,
+      targetLang: settings.targetLang,
+      richPayload,
+    });
   }
 
   function buildTranslationRenderPayload(data) {
@@ -665,10 +819,13 @@
     engine,
     state,
     footnoteText,
+    pinDuringStream,
   }) {
     ensurePanel();
 
     panel.dataset.state = state || "idle";
+    panel.dataset.pinned = pinDuringStream ? "true" : "false";
+    isPinnedDuringStream = Boolean(pinDuringStream);
 
     applyTranslationContent(translationText, translationHtml);
     applyEngineLabel(engine);
@@ -849,6 +1006,8 @@
 
   function getEngineLabel(engine) {
     switch (engine) {
+      case "ai":
+        return "AI";
       case "google":
         return "Google";
       case "baidu":
@@ -866,7 +1025,9 @@
 
   function buildFootnoteText(data, state) {
     if (state === "loading") {
-      return "正在调用翻译引擎，请稍候。";
+      return isPinnedDuringStream
+        ? "长文本翻译中，面板已临时固定。"
+        : "正在调用翻译引擎，请稍候。";
     }
 
     if (state === "error") {
@@ -982,6 +1143,19 @@
    * 3. 最终位置统一 clamp 到可视区域，避免超出窗口。
    */
   function positionPanel(anchorRect) {
+    if (!panel) {
+      return;
+    }
+
+    if (isPinnedDuringStream) {
+      const margin = 16;
+      panel.style.position = "fixed";
+      panel.style.left = `${Math.max(margin, window.innerWidth - panel.offsetWidth - margin)}px`;
+      panel.style.top = `${margin}px`;
+      return;
+    }
+
+    panel.style.position = "absolute";
     const margin = 12;
     const fallbackRect = {
       top: window.innerHeight / 2,
@@ -1058,6 +1232,8 @@
       return;
     }
 
+    abortActiveStream();
+
     if (debounceTimer) {
       clearTimeout(debounceTimer);
       debounceTimer = null;
@@ -1071,10 +1247,48 @@
     // 关闭后允许同一选区再次触发（例如手动重试）。
     lastSelectionKey = "";
     lastAnchorRect = null;
+    finishStreamingState();
 
     // 递增请求序号，让在途旧响应自动失效，避免面板被重新弹出。
     requestId += 1;
     panel.classList.add("dst-hidden");
     panel.dataset.state = "idle";
+    panel.dataset.pinned = "false";
+  }
+
+  function abortActiveStream() {
+    if (!activeStreamPort) {
+      return;
+    }
+
+    closeStreamPort(activeStreamPort);
+    finishStreamingState();
+  }
+
+  function closeStreamPort(port) {
+    if (!port) {
+      disconnectStreamPort();
+      return;
+    }
+
+    try {
+      port.disconnect();
+    } catch (_error) {
+      // ignore disconnect errors
+    }
+
+    if (activeStreamPort === port) {
+      disconnectStreamPort();
+    }
+  }
+
+  function disconnectStreamPort() {
+    activeStreamPort = null;
+    activeStreamRequestId = 0;
+  }
+
+  function finishStreamingState() {
+    isStreaming = false;
+    isPinnedDuringStream = false;
   }
 })();

@@ -3,10 +3,45 @@
  *
  * 这个文件负责：
  * 1. 接收 content.js 的翻译请求并读取当前配置。
- * 2. 按引擎模式与凭证状态在百度/Google 间做二选一。
+ * 2. 按引擎模式与凭证状态在百度/Google/AI 间做选择。
  * 3. 结合语言检测与特征字判断简繁，决定是否跳过。
- * 4. 统一处理超时、错误提示、结构化翻译与缓存。
+ * 4. 统一处理超时、错误提示、结构化翻译、流式响应与缓存。
  */
+
+const AI_PROVIDER_PRESETS = {
+  openai: {
+    label: "OpenAI",
+    baseUrl: "https://api.openai.com",
+    path: "/v1/chat/completions",
+    model: "gpt-4.1-mini",
+  },
+  deepseek: {
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    path: "/v1/chat/completions",
+    model: "deepseek-chat",
+  },
+  "zhipu-flash-free": {
+    label: "智谱 Flash 免费",
+    baseUrl: "https://open.bigmodel.cn",
+    path: "/api/paas/v4/chat/completions",
+    model: "glm-4-flash",
+  },
+  custom: {
+    label: "Custom AI",
+    baseUrl: "",
+    path: "/v1/chat/completions",
+    model: "",
+  },
+};
+
+const AI_PROMPT_PRESETS = {
+  "precision-translate": {
+    label: "高保真精翻",
+    prompt:
+      "你是专业翻译助手。请忠实翻译用户提供的文本，优先保证准确、自然、术语一致，保留段落、列表、代码块、换行与原始结构，不要添加解释，不要省略内容，不要输出译者说明。",
+  },
+};
 
 const DEFAULT_SETTINGS = {
   // 源语言；auto 表示交给翻译服务自动识别。
@@ -17,22 +52,34 @@ const DEFAULT_SETTINGS = {
   maxChars: 2000,
   // 是否展示原文预览（由 content.js 渲染）。
   showSourceText: true,
-  // 引擎模式：auto / baidu / google。
+  // 引擎模式：auto / baidu / google / ai。
   engineMode: "auto",
   // 面板主题配置：后台仅负责存储与透传，不参与样式渲染。
   panelTheme: "classic",
   // 百度翻译凭证（需 AppID/密钥成对）。
   baiduAppId: "",
   baiduAppKey: "",
+  // AI 接口预设与自定义参数。
+  aiProviderPreset: "openai",
+  aiBaseUrl: AI_PROVIDER_PRESETS.openai.baseUrl,
+  aiApiKey: "",
+  aiModel: AI_PROVIDER_PRESETS.openai.model,
+  aiPath: AI_PROVIDER_PRESETS.openai.path,
+  aiPromptPreset: "precision-translate",
+  aiCustomPrompt: "",
+  aiEnabledStream: true,
 };
 
 const cache = new Map();
 const CACHE_LIMIT = 150;
+const activeStreamControllers = new Map();
 
 // Google 通道固定 3 秒超时，避免长时间无响应。
 const GOOGLE_TIMEOUT_MS = 3000;
 // 百度通道预留更长超时窗口，适配常见网络波动。
 const BAIDU_TIMEOUT_MS = 6000;
+// AI 通道默认给长文本更长等待时间。
+const AI_TIMEOUT_MS = 45000;
 
 const MIN_TEXT_LENGTH = 2;
 const MIN_CHINESE_RATIO = 0.3;
@@ -85,8 +132,45 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+chrome.runtime.onConnect.addListener((port) => {
+  if (!port || port.name !== "AI_TRANSLATION_STREAM") {
+    return;
+  }
+
+  let streamKey = "";
+
+  port.onMessage.addListener((message) => {
+    if (!message || message.type !== "translate:start") {
+      return;
+    }
+
+    streamKey = `${port.sender?.tab?.id || "tab"}:${String(message.requestId || "")}`;
+    handleStreamingTranslation(port, message, streamKey).catch((error) => {
+      safePostMessage(port, {
+        type: "translate:error",
+        requestId: message.requestId,
+        error:
+          error instanceof Error ? error.message : "流式翻译失败，请稍后重试。",
+      });
+    });
+  });
+
+  port.onDisconnect.addListener(() => {
+    if (!streamKey) {
+      return;
+    }
+
+    const controller = activeStreamControllers.get(streamKey);
+    if (controller) {
+      controller.abort();
+      activeStreamControllers.delete(streamKey);
+    }
+  });
+});
+
 async function translateMessage(message) {
   const settings = await getSettings();
+  const aiSettings = resolveAiSettings(settings);
   const sourceLang = normalizeLanguage(
     message.sourceLang || settings.sourceLang || "auto",
   );
@@ -123,10 +207,18 @@ async function translateMessage(message) {
   const baiduAppKey = sanitizeCredential(settings.baiduAppKey);
   const hasBaiduCredential = Boolean(baiduAppId && baiduAppKey);
   const engineMode = normalizeEngineMode(settings.engineMode);
-  const selectedEngine = resolveEngineSelection(engineMode, hasBaiduCredential);
+  const selectedEngine = resolveEngineSelection(
+    engineMode,
+    hasBaiduCredential,
+    aiSettings.isConfigured,
+  );
 
   if (selectedEngine === "baidu" && !hasBaiduCredential) {
     throw new Error("当前引擎模式为仅百度，但未填写完整的百度 AppID 和密钥。");
+  }
+
+  if (selectedEngine === "ai" && !aiSettings.isConfigured) {
+    throw new Error("当前引擎模式为 AI 精翻，但 AI Base URL、API Key 或模型名未配置完整。");
   }
 
   const languageInfo = await detectLanguageWithFallback(compactText || text);
@@ -173,6 +265,13 @@ async function translateMessage(message) {
           baiduAppId,
           baiduAppKey,
         )
+      : selectedEngine === "ai"
+        ? await translateRichWithAiEngine(
+            richPayload,
+            effectiveSourceLang,
+            targetLang,
+            aiSettings,
+          )
       : await translateRichWithGoogleEngine(
           richPayload,
           effectiveSourceLang,
@@ -186,6 +285,13 @@ async function translateMessage(message) {
           baiduAppId,
           baiduAppKey,
         )
+      : selectedEngine === "ai"
+        ? await translateWithAiEngine(
+            text,
+            effectiveSourceLang,
+            targetLang,
+            aiSettings,
+          )
       : await translateWithGoogleEngine(text, effectiveSourceLang, targetLang);
 
   // 回传识别元信息，前端可据此展示提示并辅助排障。
@@ -630,26 +736,123 @@ function sanitizeCredential(value) {
   return value.trim();
 }
 
+function normalizeAiPreset(value) {
+  if (typeof value !== "string") {
+    return DEFAULT_SETTINGS.aiProviderPreset;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return AI_PROVIDER_PRESETS[normalized]
+    ? normalized
+    : DEFAULT_SETTINGS.aiProviderPreset;
+}
+
+function normalizeAiBaseUrl(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const normalized = value.trim().replace(/\/+$/, "");
+  if (!normalized) {
+    return "";
+  }
+
+  try {
+    const url = new URL(normalized);
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch (_error) {
+    return normalized;
+  }
+}
+
+function normalizeAiPath(value, fallback = DEFAULT_SETTINGS.aiPath) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+function normalizeAiPromptPreset(value) {
+  if (typeof value !== "string") {
+    return DEFAULT_SETTINGS.aiPromptPreset;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return AI_PROMPT_PRESETS[normalized]
+    ? normalized
+    : DEFAULT_SETTINGS.aiPromptPreset;
+}
+
+function normalizeAiPrompt(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.replace(/\r/g, "").trim();
+}
+
+function resolveAiSettings(settings) {
+  const presetKey = normalizeAiPreset(settings.aiProviderPreset);
+  const preset = AI_PROVIDER_PRESETS[presetKey] || AI_PROVIDER_PRESETS.openai;
+  const promptPresetKey = normalizeAiPromptPreset(settings.aiPromptPreset);
+  const promptPreset =
+    AI_PROMPT_PRESETS[promptPresetKey] ||
+    AI_PROMPT_PRESETS[DEFAULT_SETTINGS.aiPromptPreset];
+  const customPrompt = normalizeAiPrompt(settings.aiCustomPrompt);
+  const baseUrl = normalizeAiBaseUrl(settings.aiBaseUrl || preset.baseUrl);
+  const apiKey = sanitizeCredential(settings.aiApiKey);
+  const model = sanitizeCredential(settings.aiModel || preset.model);
+  const path = normalizeAiPath(settings.aiPath || preset.path, preset.path);
+
+  return {
+    presetKey,
+    label: preset.label,
+    baseUrl,
+    apiKey,
+    model,
+    path,
+    promptPresetKey,
+    promptPresetLabel: promptPreset.label,
+    systemPrompt: customPrompt || promptPreset.prompt,
+    customPrompt,
+    isStreamingEnabled:
+      settings.aiEnabledStream !== undefined
+        ? Boolean(settings.aiEnabledStream)
+        : DEFAULT_SETTINGS.aiEnabledStream,
+    isConfigured: Boolean(baseUrl && apiKey && model && path),
+  };
+}
+
 function normalizeEngineMode(value) {
   if (typeof value !== "string") {
     return "auto";
   }
 
   const normalized = value.trim().toLowerCase();
-  if (normalized === "baidu" || normalized === "google") {
+  if (normalized === "baidu" || normalized === "google" || normalized === "ai") {
     return normalized;
   }
 
   return "auto";
 }
 
-function resolveEngineSelection(engineMode, hasBaiduCredential) {
+function resolveEngineSelection(engineMode, hasBaiduCredential, _hasAiConfig) {
   if (engineMode === "baidu") {
     return "baidu";
   }
 
   if (engineMode === "google") {
     return "google";
+  }
+
+  if (engineMode === "ai") {
+    return "ai";
   }
 
   return hasBaiduCredential ? "baidu" : "google";
@@ -850,6 +1053,267 @@ async function translateRichWithBaiduEngine(
   }
 }
 
+async function translateWithAiEngine(text, sourceLang, targetLang, aiSettings) {
+  try {
+    const result = await translateWithAi(
+      text,
+      sourceLang,
+      targetLang,
+      aiSettings,
+      false,
+    );
+
+    return {
+      ...result,
+      engine: "ai",
+      engineLabel: aiSettings.label,
+    };
+  } catch (error) {
+    throw new Error(toFriendlyErrorMessage("ai", error));
+  }
+}
+
+async function translateRichWithAiEngine(
+  richPayload,
+  sourceLang,
+  targetLang,
+  aiSettings,
+) {
+  try {
+    const result = await translateRichPayload(
+      richPayload,
+      async (segmentText) =>
+        translateWithAi(segmentText, sourceLang, targetLang, aiSettings, false),
+      sourceLang,
+      targetLang,
+    );
+
+    return {
+      ...result,
+      engine: "ai",
+      engineLabel: aiSettings.label,
+    };
+  } catch (error) {
+    throw new Error(toFriendlyErrorMessage("ai", error));
+  }
+}
+
+async function translateWithAi(
+  text,
+  sourceLang,
+  targetLang,
+  aiSettings,
+  stream,
+  signal,
+  onDelta,
+) {
+  const endpoint = buildAiEndpoint(aiSettings.baseUrl, aiSettings.path);
+  const body = {
+    model: aiSettings.model,
+    stream: Boolean(stream),
+    messages: buildAiMessages(
+      aiSettings.systemPrompt,
+      text,
+      sourceLang,
+      targetLang,
+    ),
+  };
+
+  const response = await fetchWithTimeout(
+    endpoint,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${aiSettings.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal,
+    },
+    AI_TIMEOUT_MS,
+    "ai",
+  );
+
+  if (!response.ok) {
+    throw await createAiHttpError(response);
+  }
+
+  if (stream) {
+    return readAiStream(response, sourceLang, targetLang, onDelta);
+  }
+
+  const payload = await response.json();
+  const translatedText = extractAiTranslatedText(payload);
+  if (!translatedText) {
+    throw new Error("AI 翻译结果为空，请稍后重试。");
+  }
+
+  return {
+    translatedText,
+    detectedSourceLang: normalizeDetectedLanguage(sourceLang),
+    targetLang,
+  };
+}
+
+function buildAiEndpoint(baseUrl, path) {
+  const normalizedBase = normalizeAiBaseUrl(baseUrl);
+  const normalizedPath = normalizeAiPath(path);
+  return `${normalizedBase}${normalizedPath}`;
+}
+
+function buildAiMessages(systemPrompt, text, sourceLang, targetLang) {
+  return [
+    {
+      role: "system",
+      content:
+        normalizeAiPrompt(systemPrompt) ||
+        AI_PROMPT_PRESETS[DEFAULT_SETTINGS.aiPromptPreset].prompt,
+    },
+    {
+      role: "user",
+      content: `请将以下文本从 ${sourceLang || "auto"} 翻译到 ${targetLang || "zh-CN"}：\n\n${text}`,
+    },
+  ];
+}
+
+async function readAiStream(response, sourceLang, targetLang, onDelta) {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("当前 AI 接口未返回可读取的流式响应。");
+  }
+
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let translatedText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split(/\r?\n\r?\n/);
+    buffer = chunks.pop() || "";
+
+    for (const chunk of chunks) {
+      const parsed = parseAiSseChunk(chunk);
+      for (const entry of parsed) {
+        if (entry === "[DONE]") {
+          return {
+            translatedText: translatedText.trim(),
+            detectedSourceLang: normalizeDetectedLanguage(sourceLang),
+            targetLang,
+          };
+        }
+
+        const deltaText = extractAiDeltaText(entry);
+        if (!deltaText) {
+          continue;
+        }
+
+        translatedText += deltaText;
+        if (typeof onDelta === "function") {
+          onDelta(deltaText, translatedText);
+        }
+      }
+    }
+  }
+
+  const trailingEntries = parseAiSseChunk(buffer);
+  for (const entry of trailingEntries) {
+    const deltaText = extractAiDeltaText(entry);
+    if (!deltaText) {
+      continue;
+    }
+
+    translatedText += deltaText;
+    if (typeof onDelta === "function") {
+      onDelta(deltaText, translatedText);
+    }
+  }
+
+  return {
+    translatedText: translatedText.trim(),
+    detectedSourceLang: normalizeDetectedLanguage(sourceLang),
+    targetLang,
+  };
+}
+
+function parseAiSseChunk(chunk) {
+  if (!chunk || typeof chunk !== "string") {
+    return [];
+  }
+
+  return chunk
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .filter(Boolean)
+    .map((line) => {
+      if (line === "[DONE]") {
+        return line;
+      }
+
+      try {
+        return JSON.parse(line);
+      } catch (_error) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function extractAiDeltaText(payload) {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  return choices
+    .map((choice) => {
+      const content = choice?.delta?.content;
+      if (typeof content === "string") {
+        return content;
+      }
+
+      if (Array.isArray(content)) {
+        return content
+          .map((item) => (typeof item?.text === "string" ? item.text : ""))
+          .join("");
+      }
+
+      return "";
+    })
+    .join("");
+}
+
+function extractAiTranslatedText(payload) {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  return choices
+    .map((choice) => {
+      const content = choice?.message?.content;
+      if (typeof content === "string") {
+        return content;
+      }
+
+      if (Array.isArray(content)) {
+        return content
+          .map((item) => (typeof item?.text === "string" ? item.text : ""))
+          .join("");
+      }
+
+      return "";
+    })
+    .join("")
+    .trim();
+}
+
 async function translateRichPayload(
   richPayload,
   translateSegment,
@@ -909,6 +1373,122 @@ async function translateRichPayload(
       segmentCount: richPayload.segments.length,
     },
   };
+}
+
+async function handleStreamingTranslation(port, message, streamKey) {
+  const settings = await getSettings();
+  const aiSettings = resolveAiSettings(settings);
+  const sourceLang = normalizeLanguage(
+    message.sourceLang || settings.sourceLang || "auto",
+  );
+  const targetLang = normalizeLanguage(
+    message.targetLang || settings.targetLang || "zh-CN",
+  );
+  const text = sanitizeText(message.text, { collapseWhitespace: false });
+  const compactText = sanitizeText(message.text, { collapseWhitespace: true });
+
+  if (!text) {
+    throw new Error("未检测到可翻译文本。");
+  }
+
+  if (!aiSettings.isConfigured) {
+    throw new Error("AI 精翻配置不完整，请先在设置页填写 AI Base URL、API Key 和模型名。");
+  }
+
+  const maxChars = Number(settings.maxChars) || DEFAULT_SETTINGS.maxChars;
+  if (compactText.length > maxChars) {
+    throw new Error(`选中文本超过 ${maxChars} 字符限制。`);
+  }
+
+  const languageInfo = await detectLanguageWithFallback(compactText || text);
+  const skipDecision = evaluateSkipDecision({
+    sourceLang,
+    targetLang,
+    languageInfo,
+  });
+
+  if (skipDecision.shouldSkip) {
+    safePostMessage(port, {
+      type: "translate:complete",
+      requestId: message.requestId,
+      data: buildSkipResult("检测到简体中文，已跳过翻译。", targetLang, "simplified-zh", {
+        variant: skipDecision.variant,
+        chineseRatio: skipDecision.chineseRatio,
+        confidence: skipDecision.confidence,
+      }),
+    });
+    return;
+  }
+
+  const effectiveSourceLang = resolveEffectiveSourceLang(
+    sourceLang,
+    skipDecision.variant,
+    languageInfo.language,
+  );
+  const controller = new AbortController();
+  activeStreamControllers.set(streamKey, controller);
+
+  safePostMessage(port, {
+    type: "translate:start",
+    requestId: message.requestId,
+    engine: "ai",
+    engineLabel: aiSettings.label,
+  });
+
+  try {
+    const result = await translateWithAi(
+      text,
+      effectiveSourceLang,
+      targetLang,
+      aiSettings,
+      true,
+      controller.signal,
+      (deltaText, finalText) => {
+        safePostMessage(port, {
+          type: "translate:delta",
+          requestId: message.requestId,
+          deltaText,
+          finalText,
+          engine: "ai",
+        });
+      },
+    );
+
+    result.engine = "ai";
+    result.engineLabel = aiSettings.label;
+    result.detectMeta = {
+      variant: skipDecision.variant,
+      chineseRatio: skipDecision.chineseRatio,
+      confidence: skipDecision.confidence,
+    };
+
+    safePostMessage(port, {
+      type: "translate:complete",
+      requestId: message.requestId,
+      data: result,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      safePostMessage(port, {
+        type: "translate:error",
+        requestId: message.requestId,
+        error: "翻译已取消。",
+      });
+      return;
+    }
+
+    throw new Error(toFriendlyErrorMessage("ai", error));
+  } finally {
+    activeStreamControllers.delete(streamKey);
+  }
+}
+
+function safePostMessage(port, payload) {
+  try {
+    port.postMessage(payload);
+  } catch (_error) {
+    // port 已断开时忽略，避免 service worker 抛出未捕获异常。
+  }
 }
 
 function splitWhitespaceEdges(text) {
@@ -1031,10 +1611,18 @@ function toBaiduLanguage(langCode, allowAuto) {
 }
 
 function toFriendlyErrorMessage(engine, error) {
+  if (error?.code === "ABORTED") {
+    return "翻译已取消。";
+  }
+
   if (error?.code === "TIMEOUT") {
     const timeoutSeconds = Math.round((Number(error.timeoutMs) || 0) / 1000);
     if (engine === "google") {
       return `网络请求超时（${timeoutSeconds || 3}秒）。请稍后重试，或填写百度凭证后走百度通道。`;
+    }
+
+    if (engine === "ai") {
+      return `AI 请求超时（${timeoutSeconds || 45}秒）。长文本可稍后重试，或切换模型后再试。`;
     }
 
     return `网络请求超时（${timeoutSeconds || 6}秒）。请检查网络后重试。`;
@@ -1046,6 +1634,14 @@ function toFriendlyErrorMessage(engine, error) {
     }
 
     return "访问受限（403）。当前网络无法访问 Google 翻译服务。";
+  }
+
+  if (error?.status === 401) {
+    return "AI 接口鉴权失败（401）。请检查 API Key 是否正确。";
+  }
+
+  if (error?.status === 429) {
+    return "AI 请求过于频繁或额度不足（429）。请稍后重试。";
   }
 
   if (error?.status === 502) {
@@ -1094,6 +1690,25 @@ function createBaiduApiError(code, message) {
   const error = new Error(message || "百度接口调用失败");
   error.baiduErrorCode = String(code);
   error.baiduErrorMessage = message || "";
+  return error;
+}
+
+async function createAiHttpError(response) {
+  let message = "";
+
+  try {
+    const payload = await response.json();
+    message =
+      payload?.error?.message ||
+      payload?.message ||
+      "";
+  } catch (_error) {
+    message = "";
+  }
+
+  const error = new Error(message || `AI 响应异常 (${response.status})`);
+  error.engine = "ai";
+  error.status = Number(response.status);
   return error;
 }
 
@@ -1198,13 +1813,33 @@ function toHexLE(value) {
 }
 
 async function fetchWithTimeout(url, options, timeoutMs, engine) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const externalSignal = options?.signal;
+  let offExternalAbort = null;
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      timeoutController.abort();
+    } else {
+      offExternalAbort = () => timeoutController.abort();
+      externalSignal.addEventListener("abort", offExternalAbort, {
+        once: true,
+      });
+    }
+  }
 
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetch(url, { ...options, signal: timeoutController.signal });
   } catch (error) {
     if (error?.name === "AbortError") {
+      if (externalSignal?.aborted) {
+        const abortError = new Error("请求已取消。");
+        abortError.code = "ABORTED";
+        abortError.engine = engine;
+        throw abortError;
+      }
+
       const timeoutError = new Error("请求超时。");
       timeoutError.code = "TIMEOUT";
       timeoutError.engine = engine;
@@ -1215,6 +1850,9 @@ async function fetchWithTimeout(url, options, timeoutMs, engine) {
     throw error;
   } finally {
     clearTimeout(timer);
+    if (externalSignal && offExternalAbort) {
+      externalSignal.removeEventListener("abort", offExternalAbort);
+    }
   }
 }
 
