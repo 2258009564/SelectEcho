@@ -200,6 +200,11 @@ SelectEcho/
 ├─ background.js
 ├─ content.css
 ├─ content.js
+├─ icons/
+│  ├─ icon16.png
+│  ├─ icon32.png
+│  ├─ icon48.png
+│  └─ icon128.png
 ├─ LICENSE
 ├─ manifest.json
 ├─ options.css
@@ -238,14 +243,14 @@ SelectEcho/
 
 仓库已支持“推送标签自动发版”：
 
-- 触发条件：推送 `v*` 版本标签（例如 `v1.1.1`）
+- 触发条件：推送 `v*` 版本标签（例如 `v1.1.2`）
 - 自动动作：创建 Release、自动生成 Release Notes、上传 `SelectEcho.zip`
 
 你只需要执行：
 
 ```bash
-git tag v1.1.1
-git push origin v1.1.1
+git tag v1.1.2
+git push origin v1.1.2
 ```
 
 执行后可通过以下地址直接下载最新稳定版 ZIP：
@@ -253,6 +258,11 @@ git push origin v1.1.1
 <https://github.com/2258009564/SelectEcho/releases/latest/download/SelectEcho.zip>
 
 ## 版本记录
+
+### v1.1.2
+
+- 插件图标更新为 `carbon:translate`（同步到工具栏与扩展详情图标）。
+- `manifest.json` 版本号更新为 `1.1.2`。
 
 ### v1.1.1
 

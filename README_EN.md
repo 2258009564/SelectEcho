@@ -5,11 +5,10 @@ Select text with your left mouse button, release, and you get translation near t
 
 If you want to test the core feature quickly after installation, start with the section below.
 
-## What's New in v1.1.1
+## What's New in v1.1.2
 
-- Left-click the extension toolbar icon to open settings directly.
-- Added a subtle GitHub Star link in the settings page corner.
-- Added a compact GitHub Star link inside each translation panel.
+- Updated the extension icon to `carbon:translate`.
+- Bumped extension version to `1.1.2`.
 
 ## 2-Minute Quick Test
 
@@ -79,6 +78,7 @@ The settings page also includes a tiny GitHub Star link in the bottom-right corn
 ## Project Files
 
 - `manifest.json`: extension manifest and permissions
+- `icons/icon16.png` / `icons/icon32.png` / `icons/icon48.png` / `icons/icon128.png`: extension icon assets
 - `background.js`: translation routing and engine logic
 - `content.js`: text selection listener and translation panel rendering
 - `options.html` / `options.css` / `options.js`: settings page
