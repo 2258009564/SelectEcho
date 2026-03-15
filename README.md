@@ -2,8 +2,11 @@
 
 SelectEcho 是一个面向 Chrome/Edge（Manifest V3）的划词翻译扩展：左键选中文本，松开即显示译文。
 
+English quick start: [README_EN.md](README_EN.md)
+
 ## 目录
 
+- [English README](README_EN.md)
 - [功能亮点](#功能亮点)
 - [支持环境](#支持环境)
 - [安装方式](#安装方式)
