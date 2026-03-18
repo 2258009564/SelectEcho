@@ -5,10 +5,12 @@ Select text with your left mouse button, release, and you get translation near t
 
 If you want to test the core feature quickly after installation, start with the section below.
 
-## What's New in v1.1.2
+## What's New in v1.1.3
 
-- Updated the extension icon to `carbon:translate`.
-- Bumped extension version to `1.1.2`.
+- Bumped extension version to `1.1.3`.
+- Loading phase now uses a tiny capsule and only shows `翻译中...`.
+- During translation, any key press or mouse click can interrupt immediately (wheel scroll does not interrupt).
+- Engine switching inside the panel is now a dropdown selection with instant re-translation.
 
 ## 2-Minute Quick Test
 
@@ -24,7 +26,9 @@ If you want to test the core feature quickly after installation, start with the 
 
 Expected result:
 
-- Panel shows status and translated text.
+- During loading, panel shows only a tiny `翻译中...` capsule.
+- Full translation panel appears after translation is complete.
+- While translating, any key press or click can interrupt instantly.
 - Press `Esc` to close the panel.
 - Click the copy button to copy current translation.
 - A small GitHub Star link is shown at the bottom of the translation panel.

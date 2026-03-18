@@ -67,6 +67,18 @@
   // 可编辑区域默认不触发翻译，避免打字过程被打断。
   const EDITABLE_SELECTOR =
     "input, textarea, [contenteditable]:not([contenteditable='false'])";
+  const ENGINE_MODE_OPTIONS = ["auto", "baidu", "google", "ai"];
+  const MODIFIER_ONLY_KEYS = new Set([
+    "Alt",
+    "Control",
+    "Meta",
+    "Shift",
+    "Fn",
+    "FnLock",
+    "CapsLock",
+    "NumLock",
+    "ScrollLock",
+  ]);
 
   let settings = { ...DEFAULT_SETTINGS };
 
@@ -75,8 +87,11 @@
   let translationNode = null;
   let sourceNode = null;
   let engineNode = null;
+  let engineMenu = null;
+  let headerNode = null;
   let stateNode = null;
   let footnoteNode = null;
+  let brandNode = null;
   let copyButton = null;
 
   // 递增请求序号：只接受最后一次请求的响应。
@@ -88,8 +103,20 @@
   let copyResetTimer = null;
   let activeStreamPort = null;
   let activeStreamRequestId = 0;
+  let pendingRequestId = 0;
+  let isRequestPending = false;
   let isStreaming = false;
   let isPinnedDuringStream = false;
+  let lastMouseAnchorRect = null;
+  let lastSelectionSnapshot = null;
+  let customPanelPosition = null;
+  let isDraggingPanel = false;
+  let dragOffsetX = 0;
+  let dragOffsetY = 0;
+  let skipNextMouseUpTranslate = false;
+  let isLoadingCapsuleMode = false;
+
+  const LOADING_CAPSULE_TEXT = "翻译中...";
 
   init();
 
@@ -134,7 +161,15 @@
   }
 
   function onViewportChange() {
-    if (!panel || panel.classList.contains("dst-hidden") || !lastAnchorRect) {
+    if (!panel || panel.classList.contains("dst-hidden")) {
+      return;
+    }
+
+    if (isEngineMenuOpen()) {
+      closeEngineMenu();
+    }
+
+    if (!lastAnchorRect && !customPanelPosition) {
       return;
     }
 
@@ -145,7 +180,20 @@
    * 仅在左键 mouseup 后尝试触发翻译。
    */
   function onMouseUp(event) {
+    if (skipNextMouseUpTranslate) {
+      skipNextMouseUpTranslate = false;
+      return;
+    }
+
     if (event.button !== 0) {
+      return;
+    }
+
+    if (isDraggingPanel) {
+      return;
+    }
+
+    if (isEngineMenuOpen() && engineMenu && engineMenu.contains(event.target)) {
       return;
     }
 
@@ -158,6 +206,8 @@
     if (isEditableTarget(event.target)) {
       return;
     }
+
+    lastMouseAnchorRect = createPointAnchorRect(event.clientX, event.clientY);
 
     if (debounceTimer) {
       clearTimeout(debounceTimer);
@@ -173,6 +223,8 @@
    */
   function handleSelectionTranslate() {
     const selection = readSelection();
+    const pointerAnchorRect = cloneAnchorRect(lastMouseAnchorRect);
+    lastMouseAnchorRect = null;
 
     // 无有效选区时收起面板，并清空去重指纹。
     if (!selection.text) {
@@ -207,7 +259,14 @@
       return;
     }
 
+    if (pointerAnchorRect) {
+      selection.rect = pointerAnchorRect;
+    }
+
     lastSelectionKey = selectionKey;
+    lastSelectionSnapshot = cloneSelectionSnapshot(selection);
+    // 新选区出现时重置手动拖拽定位，优先贴近当前鼠标锚点。
+    customPanelPosition = null;
 
     const maxChars = Number(settings.maxChars) || DEFAULT_SETTINGS.maxChars;
     if (selection.text.length > maxChars) {
@@ -232,9 +291,9 @@
       translationHtml: "",
       sourceText: sourcePreview,
       sourceHtml,
-      engine: "loading",
+      engine: normalizeEngineMode(settings.engineMode),
       state: "loading",
-      footnoteText: "正在调用翻译引擎，请稍候。",
+      footnoteText: "正在调用翻译引擎，按任意键可中断。",
     });
 
     requestTranslation(selection);
@@ -248,21 +307,61 @@
       return;
     }
 
-    if (panel.contains(event.target)) {
+    if (isTranslationPending()) {
+      skipNextMouseUpTranslate = true;
+      interruptPendingTranslationForUserAction();
       return;
     }
 
-    if (isPinnedDuringStream) {
+    if (isEngineMenuOpen() && engineMenu && engineMenu.contains(event.target)) {
       return;
     }
+
+    if (panel.contains(event.target)) {
+      if (
+        isEngineMenuOpen() &&
+        !(engineNode && engineNode.contains(event.target))
+      ) {
+        closeEngineMenu();
+      }
+      return;
+    }
+
+    closeEngineMenu();
 
     hidePanel();
   }
 
   /**
-   * Esc 快捷关闭面板。
+   * 非输入区域中：翻译进行中按任意键中断；空闲时 Esc 关闭面板。
    */
   function onKeyDown(event) {
+    if (!panel || panel.classList.contains("dst-hidden")) {
+      return;
+    }
+
+    if (event.key === "Escape" && isEngineMenuOpen()) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeEngineMenu();
+      return;
+    }
+
+    if (isTranslationPending()) {
+      if (event.key === "Escape") {
+        interruptPendingTranslationForUserAction();
+        return;
+      }
+
+      // 低优先级策略：翻译中遇到任意按键都立即让路。
+      interruptPendingTranslationForUserAction();
+      return;
+    }
+
+    if (isEditableTarget(event.target)) {
+      return;
+    }
+
     if (event.key === "Escape") {
       hidePanel();
     }
@@ -538,8 +637,12 @@
    * 向后台发起翻译请求，并按响应结果更新面板。
    */
   function requestTranslation(selection) {
-    const { text, rect, richPayload, sourceRichHtml } = selection;
+    const normalizedSelection = cloneSelectionSnapshot(selection) || selection;
+    const { text, rect, richPayload, sourceRichHtml } = normalizedSelection;
     const currentRequest = ++requestId;
+    pendingRequestId = currentRequest;
+    isRequestPending = true;
+    lastSelectionSnapshot = cloneSelectionSnapshot(normalizedSelection);
     const sourcePreview = settings.showSourceText ? text : "";
     const sourceHtml = settings.showSourceText ? sourceRichHtml : "";
 
@@ -569,6 +672,11 @@
         // 仅处理最新请求，过期响应直接丢弃。
         if (currentRequest !== requestId) {
           return;
+        }
+
+        isRequestPending = false;
+        if (pendingRequestId === currentRequest) {
+          pendingRequestId = 0;
         }
 
         if (chrome.runtime.lastError) {
@@ -622,7 +730,7 @@
 
   function shouldUseStreamingTranslation(richPayload) {
     return (
-      settings.engineMode === "ai" &&
+      normalizeEngineMode(settings.engineMode) === "ai" &&
       settings.aiEnabledStream !== false &&
       !richPayload
     );
@@ -639,6 +747,8 @@
     const port = chrome.runtime.connect({ name: "AI_TRANSLATION_STREAM" });
     activeStreamPort = port;
     activeStreamRequestId = requestToken;
+    pendingRequestId = requestToken;
+    isRequestPending = true;
 
     port.onMessage.addListener((message) => {
       if (!message || message.requestId !== activeStreamRequestId) {
@@ -651,7 +761,6 @@
 
       if (message.type === "translate:start") {
         isStreaming = true;
-        isPinnedDuringStream = true;
         showPanel({
           anchorRect: rect,
           translationText: "翻译中...",
@@ -660,31 +769,34 @@
           sourceHtml,
           engine: message.engine || "ai",
           state: "loading",
-          footnoteText: "长文本翻译中，面板已临时固定。",
-          pinDuringStream: true,
+          footnoteText: "翻译进行中，按任意键可中断。",
+          pinDuringStream: false,
         });
         return;
       }
 
       if (message.type === "translate:delta") {
         isStreaming = true;
-        isPinnedDuringStream = true;
         showPanel({
           anchorRect: rect,
-          translationText: normalizePanelText(message.finalText) || "翻译中...",
+          translationText: "翻译中...",
           translationHtml: "",
           sourceText: sourcePreview,
           sourceHtml,
           engine: message.engine || "ai",
           state: "loading",
-          footnoteText: "长文本翻译中，面板已临时固定。",
-          pinDuringStream: true,
+          footnoteText: "翻译进行中，按任意键可中断。",
+          pinDuringStream: false,
         });
         return;
       }
 
       if (message.type === "translate:complete") {
         finishStreamingState();
+        isRequestPending = false;
+        if (pendingRequestId === requestToken) {
+          pendingRequestId = 0;
+        }
         const data = message.data || {};
         const state = mapPanelState(data.engine);
         const renderPayload = buildTranslationRenderPayload(data);
@@ -705,6 +817,10 @@
 
       if (message.type === "translate:error") {
         finishStreamingState();
+        isRequestPending = false;
+        if (pendingRequestId === requestToken) {
+          pendingRequestId = 0;
+        }
         lastSelectionKey = "";
         showPanel({
           anchorRect: rect,
@@ -729,6 +845,11 @@
       if (isStreaming && requestToken === requestId) {
         finishStreamingState();
       }
+
+      if (pendingRequestId === requestToken) {
+        pendingRequestId = 0;
+      }
+      isRequestPending = false;
 
       disconnectStreamPort();
     });
@@ -774,6 +895,7 @@
     panel.id = "dst-panel";
     panel.className = "dst-hidden";
     panel.dataset.state = "idle";
+    panel.dataset.dragging = "false";
     panel.innerHTML = `
       <div class="dst-header">
         <div class="dst-headline">
@@ -808,19 +930,46 @@
     `;
 
     document.documentElement.appendChild(panel);
+    ensureEngineMenu();
 
     translationNode = panel.querySelector(".dst-translation");
     sourceNode = panel.querySelector(".dst-source");
     engineNode = panel.querySelector(".dst-engine");
+    headerNode = panel.querySelector(".dst-header");
     stateNode = panel.querySelector(".dst-state");
     footnoteNode = panel.querySelector(".dst-footnote");
+    brandNode = panel.querySelector(".dst-brand");
     copyButton = panel.querySelector(".dst-copy");
 
     const closeButton = panel.querySelector(".dst-close");
     closeButton.addEventListener("click", hidePanel);
     copyButton.addEventListener("click", copyTranslation);
 
+    if (engineNode) {
+      engineNode.setAttribute("role", "button");
+      engineNode.setAttribute("tabindex", "0");
+      engineNode.setAttribute("aria-label", "点击打开翻译引擎菜单");
+      engineNode.addEventListener("click", onEngineNodeClick);
+      engineNode.addEventListener("keydown", onEngineNodeKeyDown);
+    }
+
+    if (headerNode) {
+      headerNode.addEventListener("mousedown", onPanelDragStart);
+    }
+
     applyPanelTheme();
+  }
+
+  function ensureEngineMenu() {
+    if (engineMenu) {
+      return;
+    }
+
+    engineMenu = document.createElement("div");
+    engineMenu.id = "dst-engine-menu";
+    engineMenu.hidden = true;
+    engineMenu.setAttribute("role", "menu");
+    document.documentElement.appendChild(engineMenu);
   }
 
   /**
@@ -839,22 +988,40 @@
   }) {
     ensurePanel();
 
-    panel.dataset.state = state || "idle";
+    const normalizedState = state || "idle";
+    panel.dataset.state = normalizedState;
     panel.dataset.pinned = pinDuringStream ? "true" : "false";
     isPinnedDuringStream = Boolean(pinDuringStream);
 
-    applyTranslationContent(translationText, translationHtml);
-    applyEngineLabel(engine);
-    applyStateLabel(state);
-    applyCopyAvailability(state);
+    const isLoadingState = normalizedState === "loading";
+    setLoadingCapsuleMode(isLoadingState);
 
-    applySourceContent(sourceText, sourceHtml);
-
-    if (footnoteText) {
-      footnoteNode.textContent = footnoteText;
-      footnoteNode.style.display = "block";
+    if (isLoadingState) {
+      applyTranslationContent(LOADING_CAPSULE_TEXT, "");
+      applyEngineLabel("");
+      applyStateLabel("");
+      applyCopyAvailability(normalizedState);
+      applySourceContent("", "");
+      if (footnoteNode) {
+        footnoteNode.textContent = "";
+      }
     } else {
-      footnoteNode.textContent = "";
+      applyTranslationContent(translationText, translationHtml);
+      applyEngineLabel(engine);
+      applyStateLabel(normalizedState);
+      applyCopyAvailability(normalizedState);
+      applySourceContent(sourceText, sourceHtml);
+
+      if (footnoteText) {
+        footnoteNode.textContent = footnoteText;
+        footnoteNode.style.display = "block";
+      } else {
+        footnoteNode.textContent = "";
+        footnoteNode.style.display = "none";
+      }
+    }
+
+    if (isLoadingState && footnoteNode) {
       footnoteNode.style.display = "none";
     }
 
@@ -862,6 +1029,41 @@
     lastAnchorRect = anchorRect || lastAnchorRect;
     positionPanel(lastAnchorRect);
     panel.classList.remove("dst-hidden");
+  }
+
+  function setLoadingCapsuleMode(enabled) {
+    if (!panel || !translationNode) {
+      return;
+    }
+
+    if (enabled) {
+      isLoadingCapsuleMode = true;
+      panel.dataset.mode = "loading-capsule";
+      closeEngineMenu();
+      stopPanelDragging();
+      translationNode.classList.remove("is-rich");
+      return;
+    }
+
+    if (!isLoadingCapsuleMode) {
+      return;
+    }
+
+    isLoadingCapsuleMode = false;
+    panel.dataset.mode = "default";
+
+    if (headerNode) {
+      headerNode.style.removeProperty("display");
+    }
+    if (sourceNode) {
+      sourceNode.style.removeProperty("display");
+    }
+    if (footnoteNode) {
+      footnoteNode.style.removeProperty("display");
+    }
+    if (brandNode) {
+      brandNode.style.removeProperty("display");
+    }
   }
 
   function applyTranslationContent(translationText, translationHtml) {
@@ -949,6 +1151,23 @@
     return aliasTheme;
   }
 
+  function normalizeEngineMode(value) {
+    if (typeof value !== "string") {
+      return DEFAULT_SETTINGS.engineMode;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (!ENGINE_MODE_OPTIONS.includes(normalized)) {
+      return DEFAULT_SETTINGS.engineMode;
+    }
+
+    return normalized;
+  }
+
+  function getEngineModeLabel(engineMode) {
+    return getEngineLabel(normalizeEngineMode(engineMode));
+  }
+
   function applyEngineLabel(engine) {
     if (!engineNode) {
       return;
@@ -958,11 +1177,15 @@
     if (!label) {
       engineNode.textContent = "";
       engineNode.style.display = "none";
+      engineNode.title = "";
       return;
     }
 
     engineNode.textContent = label;
     engineNode.style.display = "inline-flex";
+    const currentMode = normalizeEngineMode(settings.engineMode);
+    engineNode.dataset.mode = currentMode;
+    engineNode.title = `点击切换翻译引擎（当前默认：${getEngineModeLabel(currentMode)}）`;
   }
 
   function applyStateLabel(state) {
@@ -992,6 +1215,174 @@
     copyButton.textContent = "复制";
   }
 
+  function onEngineNodeClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleEngineMenu();
+  }
+
+  function onEngineNodeKeyDown(event) {
+    if (
+      event.key !== "Enter" &&
+      event.key !== " " &&
+      event.key !== "ArrowDown"
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    openEngineMenu();
+  }
+
+  function toggleEngineMenu() {
+    if (isEngineMenuOpen()) {
+      closeEngineMenu();
+      return;
+    }
+
+    openEngineMenu();
+  }
+
+  function isEngineMenuOpen() {
+    return Boolean(engineMenu && !engineMenu.hidden);
+  }
+
+  function openEngineMenu() {
+    ensureEngineMenu();
+
+    if (!engineMenu || !engineNode || panel?.classList.contains("dst-hidden")) {
+      return;
+    }
+
+    renderEngineMenuOptions();
+    engineMenu.hidden = false;
+    positionEngineMenu();
+  }
+
+  function closeEngineMenu() {
+    if (!engineMenu) {
+      return;
+    }
+
+    engineMenu.hidden = true;
+    engineMenu.innerHTML = "";
+  }
+
+  function renderEngineMenuOptions() {
+    if (!engineMenu) {
+      return;
+    }
+
+    const currentMode = normalizeEngineMode(settings.engineMode);
+    const optionsHtml = ENGINE_MODE_OPTIONS.map((mode) => {
+      const label = getEngineModeLabel(mode) || "Auto";
+      const selected = mode === currentMode;
+      return `<button class="dst-engine-option${selected ? " is-active" : ""}" type="button" data-mode="${mode}" role="menuitemradio" aria-checked="${selected ? "true" : "false"}"><span>${label}</span><span class="dst-engine-check" aria-hidden="true">${selected ? "✓" : ""}</span></button>`;
+    }).join("");
+
+    engineMenu.innerHTML = optionsHtml;
+
+    const optionNodes = engineMenu.querySelectorAll(".dst-engine-option");
+    optionNodes.forEach((node) => {
+      node.addEventListener("click", (event) => {
+        const target = event.currentTarget;
+        if (!(target instanceof HTMLElement)) {
+          return;
+        }
+
+        const nextMode = target.dataset.mode || "auto";
+        closeEngineMenu();
+        applyEngineModeAndRetrigger(nextMode);
+      });
+    });
+  }
+
+  function positionEngineMenu() {
+    if (!engineMenu || !engineNode) {
+      return;
+    }
+
+    const margin = 8;
+    const nodeRect = engineNode.getBoundingClientRect();
+    const menuWidth = Math.max(engineMenu.offsetWidth, 150);
+    const menuHeight = Math.max(engineMenu.offsetHeight, 132);
+
+    let left = nodeRect.right - menuWidth;
+    let top = nodeRect.bottom + 6;
+
+    if (left < margin) {
+      left = margin;
+    }
+
+    if (left + menuWidth > window.innerWidth - margin) {
+      left = window.innerWidth - menuWidth - margin;
+    }
+
+    if (top + menuHeight > window.innerHeight - margin) {
+      top = nodeRect.top - menuHeight - 6;
+    }
+
+    if (top < margin) {
+      top = margin;
+    }
+
+    engineMenu.style.left = `${Math.round(left)}px`;
+    engineMenu.style.top = `${Math.round(top)}px`;
+  }
+
+  function applyEngineModeAndRetrigger(nextMode) {
+    const normalizedMode = normalizeEngineMode(nextMode);
+    const previousMode = normalizeEngineMode(settings.engineMode);
+    const modeLabel = getEngineModeLabel(normalizedMode) || "Auto";
+
+    chrome.storage.sync.set({ engineMode: normalizedMode }, () => {
+      if (chrome.runtime.lastError) {
+        settings.engineMode = previousMode;
+
+        if (footnoteNode) {
+          footnoteNode.textContent = `引擎切换失败：${chrome.runtime.lastError.message}`;
+          footnoteNode.style.display = "block";
+        }
+        return;
+      }
+
+      settings.engineMode = normalizedMode;
+
+      const snapshot = cloneSelectionSnapshot(lastSelectionSnapshot);
+      if (!snapshot || !snapshot.text) {
+        applyEngineLabel(normalizedMode);
+        if (footnoteNode) {
+          footnoteNode.textContent = `已切换到 ${modeLabel}。`;
+          footnoteNode.style.display = "block";
+        }
+        return;
+      }
+
+      cancelPendingTranslation({
+        keepPanelVisible: false,
+        skipPanelStateUpdate: true,
+      });
+
+      const sourcePreview = settings.showSourceText ? snapshot.text : "";
+      const sourceHtml = settings.showSourceText ? snapshot.sourceRichHtml : "";
+
+      showPanel({
+        anchorRect: snapshot.rect,
+        translationText: "翻译中...",
+        translationHtml: "",
+        sourceText: sourcePreview,
+        sourceHtml,
+        engine: normalizedMode,
+        state: "loading",
+        footnoteText: `已切换到 ${modeLabel}，正在重新翻译。`,
+        pinDuringStream: false,
+      });
+
+      requestTranslation(snapshot);
+    });
+  }
+
   function mapPanelState(engine) {
     switch (engine) {
       case "skip":
@@ -1009,6 +1400,8 @@
     switch (state) {
       case "loading":
         return "翻译中";
+      case "canceled":
+        return "已中断";
       case "error":
         return "失败";
       case "skip":
@@ -1022,6 +1415,8 @@
 
   function getEngineLabel(engine) {
     switch (engine) {
+      case "auto":
+        return "Auto";
       case "ai":
         return "AI";
       case "google":
@@ -1041,9 +1436,11 @@
 
   function buildFootnoteText(data, state) {
     if (state === "loading") {
-      return isPinnedDuringStream
-        ? "长文本翻译中，面板已临时固定。"
-        : "正在调用翻译引擎，请稍候。";
+      return "翻译进行中，按任意键可立即中断。";
+    }
+
+    if (state === "canceled") {
+      return "翻译已中断，可重新划词或点击引擎重试。";
     }
 
     if (state === "error") {
@@ -1163,14 +1560,6 @@
       return;
     }
 
-    if (isPinnedDuringStream) {
-      const margin = 16;
-      panel.style.position = "fixed";
-      panel.style.left = `${Math.max(margin, window.innerWidth - panel.offsetWidth - margin)}px`;
-      panel.style.top = `${margin}px`;
-      return;
-    }
-
     panel.style.position = "absolute";
     const margin = 12;
     const fallbackRect = {
@@ -1182,15 +1571,32 @@
       height: 0,
     };
 
-    const rect = anchorRect || fallbackRect;
     const panelRect = panel.getBoundingClientRect();
-
-    const centerX = rect.left + (rect.width || rect.right - rect.left || 0) / 2;
-    let left = window.scrollX + centerX - panelRect.width / 2;
-
     const minLeft = window.scrollX + margin;
     const maxLeft =
       window.scrollX + window.innerWidth - panelRect.width - margin;
+    const minTop = window.scrollY + margin;
+    const maxTop =
+      window.scrollY + window.innerHeight - panelRect.height - margin;
+
+    // 用户拖拽后，优先采用手动位置并持续做视口边界修正。
+    if (customPanelPosition) {
+      const clampedLeft = clamp(customPanelPosition.left, minLeft, maxLeft);
+      const clampedTop = clamp(customPanelPosition.top, minTop, maxTop);
+      customPanelPosition = {
+        left: clampedLeft,
+        top: clampedTop,
+      };
+
+      panel.style.left = `${Math.round(clampedLeft)}px`;
+      panel.style.top = `${Math.round(clampedTop)}px`;
+      return;
+    }
+
+    const rect = anchorRect || fallbackRect;
+
+    const centerX = rect.left + (rect.width || rect.right - rect.left || 0) / 2;
+    let left = window.scrollX + centerX - panelRect.width / 2;
     left = clamp(left, minLeft, maxLeft);
 
     const spaceBelow = window.innerHeight - rect.bottom;
@@ -1203,9 +1609,6 @@
       top = window.scrollY + rect.top - panelRect.height - margin;
     }
 
-    const minTop = window.scrollY + margin;
-    const maxTop =
-      window.scrollY + window.innerHeight - panelRect.height - margin;
     top = clamp(top, minTop, maxTop);
 
     panel.style.left = `${Math.round(left)}px`;
@@ -1218,6 +1621,136 @@
     }
 
     return Math.min(Math.max(value, min), max);
+  }
+
+  function onPanelDragStart(event) {
+    if (event.button !== 0 || !panel || panel.classList.contains("dst-hidden")) {
+      return;
+    }
+
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest(".dst-copy, .dst-close, .dst-engine, a, button")
+    ) {
+      return;
+    }
+
+    const panelRect = panel.getBoundingClientRect();
+    dragOffsetX = event.clientX - panelRect.left;
+    dragOffsetY = event.clientY - panelRect.top;
+    isDraggingPanel = true;
+    panel.dataset.dragging = "true";
+
+    document.addEventListener("mousemove", onPanelDragMove, true);
+    document.addEventListener("mouseup", onPanelDragEnd, true);
+
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onPanelDragMove(event) {
+    if (!isDraggingPanel || !panel) {
+      return;
+    }
+
+    customPanelPosition = {
+      left: window.scrollX + event.clientX - dragOffsetX,
+      top: window.scrollY + event.clientY - dragOffsetY,
+    };
+    positionPanel(lastAnchorRect);
+    event.preventDefault();
+  }
+
+  function onPanelDragEnd(event) {
+    stopPanelDragging();
+
+    if (!event) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function stopPanelDragging() {
+    if (!isDraggingPanel) {
+      return;
+    }
+
+    isDraggingPanel = false;
+    if (panel) {
+      panel.dataset.dragging = "false";
+    }
+
+    document.removeEventListener("mousemove", onPanelDragMove, true);
+    document.removeEventListener("mouseup", onPanelDragEnd, true);
+  }
+
+  function createPointAnchorRect(clientX, clientY) {
+    const x = Number(clientX);
+    const y = Number(clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+
+    return {
+      top: y,
+      left: x,
+      right: x,
+      bottom: y,
+      width: 0,
+      height: 0,
+    };
+  }
+
+  function cloneAnchorRect(rect) {
+    if (!rect) {
+      return null;
+    }
+
+    return {
+      top: Number(rect.top) || 0,
+      left: Number(rect.left) || 0,
+      right: Number(rect.right) || Number(rect.left) || 0,
+      bottom: Number(rect.bottom) || Number(rect.top) || 0,
+      width: Number(rect.width) || 0,
+      height: Number(rect.height) || 0,
+    };
+  }
+
+  function cloneSelectionSnapshot(selection) {
+    if (!selection || typeof selection.text !== "string") {
+      return null;
+    }
+
+    return {
+      text: selection.text,
+      rect: cloneAnchorRect(selection.rect),
+      richPayload: cloneRichPayload(selection.richPayload),
+      sourceRichHtml:
+        typeof selection.sourceRichHtml === "string"
+          ? selection.sourceRichHtml
+          : "",
+    };
+  }
+
+  function cloneRichPayload(richPayload) {
+    if (
+      !richPayload ||
+      typeof richPayload.htmlTemplate !== "string" ||
+      !Array.isArray(richPayload.segments)
+    ) {
+      return null;
+    }
+
+    return {
+      htmlTemplate: richPayload.htmlTemplate,
+      segments: richPayload.segments.map((segment) => ({
+        id: segment?.id || "",
+        text: typeof segment?.text === "string" ? segment.text : "",
+      })),
+    };
   }
 
   function isEditableTarget(target) {
@@ -1240,6 +1773,74 @@
     return isEditableTarget(node);
   }
 
+  function isTranslationPending() {
+    return isStreaming || isRequestPending || Boolean(activeStreamPort);
+  }
+
+  function isModifierOnlyKey(event) {
+    return MODIFIER_ONLY_KEYS.has(event.key);
+  }
+
+  function cancelPendingTranslation(options = {}) {
+    const keepPanelVisible = options.keepPanelVisible !== false;
+    const skipPanelStateUpdate = Boolean(options.skipPanelStateUpdate);
+    const footnoteText =
+      typeof options.footnoteText === "string"
+        ? options.footnoteText
+        : "翻译已中断，可重新划词或点击引擎重试。";
+    const hasPending = isTranslationPending();
+
+    if (!hasPending) {
+      return false;
+    }
+
+    abortActiveStream();
+    requestId += 1;
+    pendingRequestId = 0;
+    isRequestPending = false;
+    lastSelectionKey = "";
+    finishStreamingState();
+
+    if (
+      !keepPanelVisible ||
+      skipPanelStateUpdate ||
+      !panel ||
+      panel.classList.contains("dst-hidden")
+    ) {
+      return true;
+    }
+
+    panel.dataset.state = "canceled";
+    panel.dataset.pinned = "false";
+    applyStateLabel("canceled");
+    applyCopyAvailability("canceled");
+
+    if (footnoteNode) {
+      footnoteNode.textContent = footnoteText;
+      footnoteNode.style.display = "block";
+    }
+
+    return true;
+  }
+
+  function interruptPendingTranslationForUserAction() {
+    closeEngineMenu();
+
+    const canceled = cancelPendingTranslation({
+      keepPanelVisible: false,
+      skipPanelStateUpdate: true,
+    });
+
+    if (!canceled || !panel) {
+      return;
+    }
+
+    panel.classList.add("dst-hidden");
+    panel.dataset.state = "idle";
+    panel.dataset.pinned = "false";
+    setLoadingCapsuleMode(false);
+  }
+
   /**
    * 隐藏面板并清理本轮交互的临时状态。
    */
@@ -1248,7 +1849,20 @@
       return;
     }
 
-    abortActiveStream();
+    closeEngineMenu();
+
+    const canceled = cancelPendingTranslation({
+      keepPanelVisible: false,
+      skipPanelStateUpdate: true,
+    });
+
+    if (!canceled) {
+      requestId += 1;
+      pendingRequestId = 0;
+      isRequestPending = false;
+    }
+
+    stopPanelDragging();
 
     if (debounceTimer) {
       clearTimeout(debounceTimer);
@@ -1263,13 +1877,14 @@
     // 关闭后允许同一选区再次触发（例如手动重试）。
     lastSelectionKey = "";
     lastAnchorRect = null;
+    lastMouseAnchorRect = null;
+    skipNextMouseUpTranslate = false;
+    customPanelPosition = null;
     finishStreamingState();
-
-    // 递增请求序号，让在途旧响应自动失效，避免面板被重新弹出。
-    requestId += 1;
     panel.classList.add("dst-hidden");
     panel.dataset.state = "idle";
     panel.dataset.pinned = "false";
+    setLoadingCapsuleMode(false);
   }
 
   function abortActiveStream() {
